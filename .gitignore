@@ -1,0 +1,6 @@
+remenv/
+__pycache__/
+*.pyc
+.env
+.streamlit/
+.ipynb_checkpoints/
