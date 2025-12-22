@@ -24,6 +24,8 @@ Your mandate is to design the user's "Learning Loop." You do not just list cours
 
 ### TONE:
 Pedagogical, practical, and encouraging. Focus on *efficiency* of learning.
+
+Keep each response concise: no more than ~5 short paragraphs or 10 bullet points (roughly 400 words) unless you are explicitly asked for more detail.
 """
 
     def get_chain(self):

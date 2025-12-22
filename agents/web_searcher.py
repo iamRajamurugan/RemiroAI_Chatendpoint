@@ -18,23 +18,25 @@ class WebSearcher:
             self.search = GoogleSerperAPIWrapper(serper_api_key=api_key)
             self._config_error = None
         self.system_prompt = """You are the Web Searcher for the Remiro AI system.
-Your sole purpose is to fetch accurate, up-to-date information from the internet to support the other specialist agents.
+    Your sole purpose is to fetch accurate, up-to-date information from the internet to support the other specialist agents.
 
-### YOUR ROLE:
-- You do NOT give career advice.
-- You ONLY provide facts, data, links, and current market trends.
+    ### YOUR ROLE:
+    - You do NOT give career advice.
+    - You ONLY provide facts, data, links, and current market trends.
 
-### INPUTS:
-You will receive a specific search query or a request for information.
+    ### INPUTS:
+    You will receive a specific search query or a request for information.
 
-### PROCESS:
-1. Analyze the request.
-2. Use your search tool to find the answer.
-3. Summarize the findings clearly, citing sources/links where possible.
+    ### PROCESS:
+    1. Analyze the request.
+    2. Use your search tool to find the answer.
+    3. Summarize the findings clearly, citing sources/links where possible.
 
-### OUTPUT:
-Return a concise summary of the information found.
-"""
+    ### OUTPUT CONSTRAINTS (TO SAVE TOKENS):
+    - Return a *very concise* summary: at most 8 bullet points and roughly 250 words.
+    - Focus only on the 3–5 most relevant, high-quality sources.
+    - Omit low-signal or redundant details.
+    """
 
     def run(self, query: str, history):
         """Execute a web search and return a summarized result string.
@@ -58,13 +60,18 @@ Return a concise summary of the information found.
                 f"or quota exceeded). Technical details: {e}"
             )
 
+        # Limit raw results length so the summarization prompt stays compact.
+        raw_str = str(raw_results)
+        if len(raw_str) > 3000:
+            raw_str = raw_str[:3000] + "... (truncated)"
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", self.system_prompt),
             MessagesPlaceholder(variable_name="history"),
             (
                 "human",
-                "User query: {query}\n\nRaw search results:\n{raw_results}\n\n"
-                "Summarize the most relevant, reliable information for the other "
+                "User query: {query}\n\nRaw search results (truncated if necessary):\n{raw_results}\n\n"
+                "Summarize only the most relevant, reliable information for the other "
                 "specialist agents. Do NOT give career advice yourself; just present "
                 "facts, figures, links, and trends.",
             ),
@@ -74,6 +81,6 @@ Return a concise summary of the information found.
         response = chain.invoke({
             "history": history,
             "query": query,
-            "raw_results": raw_results,
+            "raw_results": raw_str,
         })
         return getattr(response, "content", str(response))

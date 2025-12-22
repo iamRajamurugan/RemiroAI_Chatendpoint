@@ -21,6 +21,10 @@ class ResponseSynthesizer:
 - **Be Conversational:** Do not just dump the data. Talk *to* the user. Acknowledge their situation.
 - **Eliminate Redundancy:** If two agents said similar things, merge them.
 
+To control cost and avoid overwhelm, keep your answer focused and concise:
+- Aim for at most 8–10 key bullet points or short sections.
+- Stay around ~400–600 words unless absolutely necessary.
+
 ### EXAMPLE:
 *User:* "I want to quit my job and start a bakery."
 *Agent 1 (Strategist):* "You have $0 savings. This is risky."

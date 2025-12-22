@@ -22,6 +22,8 @@ Your mandate is to synthesize the user's entire profile into a compelling public
 
 ### TONE:
 Persuasive, polished, executive, and strategic. You are their hype-man and their strictest editor.
+
+Keep each response concise: no more than ~6 short paragraphs or 12 bullet points (roughly 450 words) unless you are explicitly asked for more detail.
 """
 
     def get_chain(self):

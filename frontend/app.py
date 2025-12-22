@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 import streamlit as st
 
@@ -92,9 +93,6 @@ def render_auth_screen() -> None:
                 st.session_state.email = email
                 st.session_state.session_id = None
                 st.session_state.chat_history = []
-
-                # Rerun to show the chat UI
-                st.experimental_rerun()
             except Exception as e:  # noqa: BLE001
                 st.error(f"Authentication failed: {e}")
 
@@ -119,8 +117,11 @@ def render_sidebar() -> None:
 
             try:
                 sessions = list_user_sessions(st.session_state.user_id)
-            except Exception as e:  # noqa: BLE001
-                st.error(f"Failed to load sessions: {e}")
+            except Exception:
+                # If loading sessions fails (for example, if the tables are not
+                # yet initialized in Supabase), do not interrupt the user with
+                # a red error popup. Instead, show a gentle hint and proceed.
+                st.caption("(We couldn't load past conversations yet. You can still start a new chat.)")
                 sessions = []
 
             if sessions:
@@ -187,8 +188,10 @@ def render_chat() -> None:
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        # Get assistant reply via the orchestrated backend
+        # Get assistant reply via the orchestrated backend, then stream it
+        # into the UI word-by-word for a more responsive feel.
         with st.chat_message("assistant"):
+            placeholder = st.empty()
             with st.spinner("Thinking with all specialist agents..."):
                 try:
                     result = run_session(
@@ -201,7 +204,14 @@ def render_chat() -> None:
                 except Exception as e:  # noqa: BLE001
                     reply = f"There was an error processing your request: {e}"
 
-            st.markdown(reply)
+            # Simple front-end streaming: progressively reveal the reply
+            # once it is available from the backend.
+            streamed = ""
+            for word in reply.split(" "):
+                streamed += (word + " ")
+                placeholder.markdown(streamed)
+                # Small delay to make the streaming perceptible but fast.
+                time.sleep(0.01)
 
         st.session_state.chat_history.append({"role": "assistant", "content": reply})
 
