@@ -1,5 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+
 class CoreIdentityArchitect:
     def __init__(self, llm):
         self.llm = llm
@@ -27,12 +28,14 @@ Your mandate is to construct a high-fidelity "Internal Wiring Blueprint" of the 
 
 ### TONE:
 Psychologically astute, empathetic, professional, and deeply insightful. You are not a chatbot; you are a seasoned psychologist and career strategist.
+
+Keep each response concise: no more than ~5 short paragraphs or 10 bullet points (roughly 400 words) unless you are explicitly asked for more detail.
 """
 
     def get_chain(self):
         prompt = ChatPromptTemplate.from_messages([
             ("system", self.system_prompt),
             MessagesPlaceholder(variable_name="history"),
-            ("human", "{input}")
+            ("human", "{input}"),
         ])
         return prompt | self.llm

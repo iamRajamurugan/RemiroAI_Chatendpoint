@@ -35,7 +35,21 @@ class AgentState(TypedDict):
 
 # Initialize LLM (Google Gemini)
 # Use a currently supported chat model; see Google AI docs for options.
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+# max_tokens caps response length to control cost across all agents.
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0.7,
+    max_tokens=512,
+)
+
+# A lighter-outputs LLM variant for utility-style agents where
+# short, factual responses are sufficient (router, web search,
+# profile updates, history summarization).
+utility_llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0.5,
+    max_tokens=256,
+)
 
 # Initialize Agent Classes
 identity_agent = CoreIdentityArchitect(llm)
@@ -44,10 +58,13 @@ strategy_agent = GrandStrategyDirector(llm)
 capability_agent = CapabilityGrowthEngineer(llm)
 dynamics_agent = WorkplaceDynamicsCultureCoach(llm)
 cmo_agent = ChiefMarketingOfficer(llm)
-router = QueryParser(llm)
+
+# Utility agents use the smaller-output LLM to minimize cost where
+# only compact facts or structured updates are needed.
+router = QueryParser(utility_llm)
 synthesizer = ResponseSynthesizer(llm)
-web_searcher = WebSearcher(llm)
-profile_updater = ProfileUpdater(llm)
+web_searcher = WebSearcher(utility_llm)
+profile_updater = ProfileUpdater(utility_llm)
 
 # --- Node Functions ---
 
@@ -55,15 +72,82 @@ def router_node(state: AgentState):
     """Analyzes the user query and selects the appropriate agents."""
     last_message = state["messages"][-1].content
     result = router.get_chain().invoke({"input": last_message})
-    return {"active_agents": result.destination_agents}
+
+    # Base list from the router LLM
+    destination_agents = list(getattr(result, "destination_agents", []) or [])
+
+    # --- 1) Limit how many specialist agents run per query ---
+    max_specialist_agents = 3
+    specialist_order = [
+        "core_identity_architect",
+        "purpose_motivation_navigator",
+        "grand_strategy_director",
+        "capability_growth_engineer",
+        "workplace_dynamics_coach",
+        "chief_marketing_officer",
+    ]
+
+    # Preserve the router's ordering but cap the number of specialists.
+    selected_specialists: List[str] = []
+    for agent_id in destination_agents:
+        if agent_id == "web_searcher":
+            continue
+        if agent_id in specialist_order and agent_id not in selected_specialists:
+            selected_specialists.append(agent_id)
+    selected_specialists = selected_specialists[:max_specialist_agents]
+
+    # --- 2) Make web search more selective ---
+    lowered = last_message.lower()
+    web_keywords = [
+        "search",
+        "google",
+        "news",
+        "latest",
+        "today",
+        "current",
+        "trend",
+        "salary",
+        "salaries",
+        "market",
+        "report",
+        "reports",
+        "statistic",
+        "statistics",
+        "stats",
+        "2023",
+        "2024",
+        "2025",
+        "data",
+        "industry",
+        "research",
+        "article",
+        "articles",
+        "online",
+        "website",
+        "websites",
+    ]
+    needs_web_search = any(k in lowered for k in web_keywords)
+    wants_web_search = "web_searcher" in destination_agents
+
+    active_agents: List[str] = []
+    active_agents.extend(selected_specialists)
+
+    # Only keep the web_searcher when the query clearly needs fresh data,
+    # or when the router chose ONLY the web_searcher and no specialists.
+    if wants_web_search:
+        if needs_web_search or not selected_specialists:
+            active_agents.append("web_searcher")
+
+    return {"active_agents": active_agents}
 
 
 def web_search_node(state: AgentState):
     """Runs the WebSearcher agent (if selected) and stores shared web context."""
     last_message = state["messages"][-1].content
 
-    # Build a minimal history for the web searcher, using existing messages
-    history = state["messages"]
+    # Build a short recent history for the web searcher to avoid huge prompts
+    full_history = state.get("messages", [])
+    history = full_history[-6:]
 
     # Use the WebSearcher helper to run Serper + LLM summarization without
     # relying on any model-specific tool-calling APIs.
@@ -95,23 +179,42 @@ def run_agent(
 
     last_message = state["messages"][-1].content
 
-    profile_context = f"\n\n[Shared User Profile Data]: {state.get('user_profile', {})}"
+    # Compact user profile context (avoid sending an unbounded dict string).
+    profile = state.get("user_profile", {})
+    profile_str = str(profile)
+    if len(profile_str) > 1200:
+        profile_str = profile_str[:1200] + "... (truncated)"
+    profile_context = f"\n\n[Shared User Profile Data]: {profile_str}"
+
+    # Compact shared web search context if present.
     web_context = ""
     if state.get("web_search_results"):
-        web_context = f"\n\n[Shared Web Search Data]: {state['web_search_results']}"
+        web_text = str(state["web_search_results"])
+        if len(web_text) > 1200:
+            web_text = web_text[:1200] + "... (truncated)"
+        web_context = f"\n\n[Shared Web Search Data]: {web_text}"
 
+    # Limit how much of the prior agents' insights we resend.
     insights_context = ""
     if prior_agent_insights:
+        insights_text = str(prior_agent_insights)
+        if len(insights_text) > 2000:
+            # Keep the most recent portion of the insights.
+            insights_text = insights_text[-2000:]
         insights_context = (
             "\n\n[Other Specialist Agents' Insights So Far]:\n"
-            f"{prior_agent_insights}"
+            f"{insights_text}"
         )
 
     full_input = last_message + profile_context + web_context + insights_context
 
+    # Only send a short recent history window to each specialist.
+    history = state.get("messages", [])
+    short_history = history[-6:]
+
     response = agent_instance.get_chain().invoke({
         "input": full_input,
-        "history": state["messages"],
+        "history": short_history,
     })
     content = getattr(response, "content", str(response))
     return {agent_name: content}
@@ -191,8 +294,10 @@ def synthesizer_node(state: AgentState):
     user_query = state["messages"][-1].content
     agent_outputs = state["agent_outputs"]
     
-    # Format outputs for the synthesizer
+    # Format outputs for the synthesizer, but cap total length to keep context small
     formatted_outputs = "\n\n".join([f"--- {k} ---\n{v}" for k, v in agent_outputs.items()])
+    if len(formatted_outputs) > 4000:
+        formatted_outputs = formatted_outputs[:4000] + "... (truncated)"
     
     response = synthesizer.get_chain().invoke({
         "user_query": user_query,
@@ -204,6 +309,12 @@ def synthesizer_node(state: AgentState):
 
 def profile_updater_node(state: AgentState):
     """Updates the long-term user_profile based on recent conversation."""
+    # Run this less frequently to save tokens: only on every 3rd user turn.
+    messages = state.get("messages", [])
+    human_count = sum(1 for m in messages if getattr(m, "type", None) == "human")
+    if human_count % 3 != 0:
+        return {}
+
     # Build a compact text representation of recent messages
     recent_messages = state.get("messages", [])[-8:]
     conversation_lines = []
@@ -241,13 +352,18 @@ def history_manager_node(state: AgentState):
     """
 
     messages = state.get("messages", [])
-    max_messages = 30
+    # Raise the threshold so summarization happens less often.
+    max_messages = 60
     keep_recent = 10
 
     if len(messages) <= max_messages:
         return {}
 
     older = messages[:-keep_recent]
+    # Only summarize a bounded window of older messages to avoid huge prompts.
+    max_older_messages = 40
+    if len(older) > max_older_messages:
+        older = older[-max_older_messages:]
     recent = messages[-keep_recent:]
 
     lines = []
@@ -264,7 +380,9 @@ def history_manager_node(state: AgentState):
         "and key decisions.\n\n" f"Conversation so far:\n{older_text}"
     )
 
-    summary_response = llm.invoke(summary_prompt)
+    # Use the smaller-output LLM here; the summary only needs to be
+    # short and factual.
+    summary_response = utility_llm.invoke(summary_prompt)
     summary_content = getattr(summary_response, "content", str(summary_response))
 
     summary_message = AIMessage(

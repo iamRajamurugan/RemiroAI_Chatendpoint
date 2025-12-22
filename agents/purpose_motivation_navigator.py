@@ -26,6 +26,8 @@ You must actively hunt for conflicts between Interests and Values.
 
 ### TONE:
 Thoughtful, probing, and clarifying. Dig deeper than surface-level answers.
+
+Keep each response concise: no more than ~5 short paragraphs or 10 bullet points (roughly 400 words) unless you are explicitly asked for more detail.
 """
 
     def get_chain(self):
